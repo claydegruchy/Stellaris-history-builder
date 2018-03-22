@@ -8,7 +8,8 @@
 
 ## How to use it:
 viewSave.py -h
-Basically, it can digest single or multiple saves, outputting a more human friendly .json file. It can also extract the keys from a save for easier interpretation.
+Basically, it can digest single or multiple saves, outputting a more human friendly .json file, stamped with date and organised by civ. It can also extract the keys from a save for easier interpretation.
+
 
 ## Todo:
 - Implement front end with something like http://visjs.org/showcase/index.html, probably with some timeline scale stuff

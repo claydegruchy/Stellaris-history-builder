@@ -1,36 +1,29 @@
 import json
 from subprocess import Popen, PIPE
 import zipfile
+import random
+import string
 import os
+import hashlib
 import dateutil.parser as dparser
 from jsondiff import diff
 import time
+import linecache
+import sys
 import argparse
+import operator
 
 
 defaultBlockLocation = 'blocks/'
-parser = argparse.ArgumentParser(
-    description='Stellaris save file dissector and interpreter')
-parser.add_argument(
-    '-d',
-    '--dissect',
-    help='Split a save file into parts of examination, be sure to incude the directory',
-    default=None)
-parser.add_argument(
-    '-dir',
-    '--directory',
-    help='parses all files in a given directory',
-    default=None)
+parser = argparse.ArgumentParser(description='Stellaris save file dissector and interpreter')
+parser.add_argument('-d', '--dissect', help='Split a save file into parts of examination, be sure to incude the directory', default=None)
+parser.add_argument('-dir', '--directory', help='parses all files in a given directory', default=None)
 requiredNamed = parser.add_argument_group('Required named arguments')
 requiredNamed.add_argument('-i', '--inputSave', help='Input file name')
-requiredNamed.add_argument(
-    '-b',
-    '--blockfolder',
-    help='Directory to store each parsed save.json (default = {defaultBlock})'.format(
-        defaultBlock=defaultBlockLocation),
-    default=defaultBlockLocation)
-# parser.parse_args(['-h'])
+requiredNamed.add_argument('-b', '--blockfolder', help='Directory to store each parsed save.json (default = {defaultBlock})'.format(defaultBlock=defaultBlockLocation), default=defaultBlockLocation)
+#parser.parse_args(['-h'])
 args = vars(parser.parse_args())
+
 
 
 stardateBlockTargetDirectory = args['blockfolder']
@@ -38,257 +31,301 @@ stardateBlockTargetDirectory = args['blockfolder']
 
 # effiency and debugging tools
 def timing(f):
-    def wrap(*args):
-        time1 = time.time()
-        ret = f(*args)
-        time2 = time.time()
-        print '%s function took %0.3f ms' % (f.func_name, (time2 - time1) * 1000.0)
-        return ret
-    return wrap
+	def wrap(*args):
+		time1 = time.time()
+		ret = f(*args)
+		time2 = time.time()
+		print '%s function took %0.3f ms' % (f.func_name, (time2 - time1) * 1000.0)
+		return ret
+	return wrap
 
 
 def full_stack():
-    import traceback
-    import sys
-    exc = sys.exc_info()[0]
-    stack = traceback.extract_stack()[:-1]  # last one would be full_stack()
-    if exc is None:  # i.e. if an exception is not present
-        del stack[-1]	   # remove call of full_stack, the printed exception
-        # will contain the caught exception caller instead
-    trc = 'Traceback (most recent call last):\n'
-    stackstr = trc + ''.join(traceback.format_list(stack))
-    if exc is not None:
-        stackstr += '  ' + traceback.format_exc().lstrip(trc)
-    return stackstr
+	import traceback
+	import sys
+	exc = sys.exc_info()[0]
+	stack = traceback.extract_stack()[:-1]  # last one would be full_stack()
+	if exc is None:  # i.e. if an exception is not present
+		del stack[-1]	   # remove call of full_stack, the printed exception
+		# will contain the caught exception caller instead
+	trc = 'Traceback (most recent call last):\n'
+	stackstr = trc + ''.join(traceback.format_list(stack))
+	if exc is not None:
+		stackstr += '  ' + traceback.format_exc().lstrip(trc)
+	return stackstr
 
 
 #####
 
+def sortList(l, k):
+	return sorted(l, key=operator.itemgetter(k))
+
 
 def extractGamestate(path):
-    # randomly generate temp filename
-    try:
-        #filename = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
-        filename = str(dparser.parse(path, fuzzy=True).date())
-        save = zipfile.ZipFile(path)
-        f = save.open('gamestate')
-        s = str(f.read()).replace("\\\"", "")
-        print "removed invalid characters"
-        f.close()
-        file = open(filename, 'w')
-        file.write(s)
-        file.close()
-        return filename
-    except Exception as e:
-        print e
-        exit()
+	# randomly generate temp filename
+	try:
+		#filename = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
+		filename = str(dparser.parse(path, fuzzy=True).date())
+		save = zipfile.ZipFile(path)
+		f = save.open('gamestate')
+		s = str(f.read()).replace("\\\"", "")
+		print "removed invalid characters"
+		f.close()
+		file = open(filename, 'w')
+		file.write(s)
+		file.close()
+		return filename
+	except Exception as e:
+		print e
+		exit()
+
 
 
 def sendToParser(inFileName, outFileName):
-    print "Sending file to parser. This may take some time depending on save size.", inFileName, outFileName
-    p = Popen(['node', "extractSave.js", inFileName, outFileName],
-              stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    print "Waiting on parser..."
-    output, err = p.communicate(
-        b"input data that is passed to subprocess' stdin")
-    p.wait()
-    p.returncode
-    return output
+	print "Sending file to parser. This may take some time depending on save size.", inFileName, outFileName
+	p = Popen(['node', "extractSave.js", inFileName, outFileName],
+			  stdin=PIPE, stdout=PIPE, stderr=PIPE)
+	print "Waiting on parser..."
+	output, err = p.communicate(
+		b"input data that is passed to subprocess' stdin")
+	p_status = p.wait()
+	rc = p.returncode
+	return output
 
 
 def ExtractSave(filename):
-    try:
-        gamestate = extractGamestate(filename)
-        outputFilename = stardateBlockTargetDirectory + gamestate + '.json'
-        if os.path.isfile(outputFilename):
-            print "File already parsed, skipping"
-        else:
-            print sendToParser(inFileName=gamestate, outFileName=outputFilename)
-        os.remove(gamestate)
-        saveJson = open(outputFilename, 'r').read()
-        saveJson = json.loads(saveJson)
-        return saveJson
-    except Exception as e:
-        print e.message, e.args
-        exit()
+	try:
+		gamestate = extractGamestate(filename)
+		outputFilename = stardateBlockTargetDirectory + gamestate + '.json'
+		if os.path.isfile(outputFilename):
+			print "File already parsed, skipping"
+		else:
+			print sendToParser(inFileName=gamestate, outFileName=outputFilename)
+		os.remove(gamestate)
+		saveJson = open(outputFilename, 'r').read()
+		saveJson = json.loads(saveJson)
+		return saveJson
+	except Exception as e:
+		print e.message, e.args
+		exit()
 
 
 def SaveFile(path, filename, content):
-    print "Saving file", filename
-    fullName = os.path.join(path, filename)
-    savefile = open(fullName, 'w')
-    savefile.write(content)
-    savefile.close()
-    return savefile
+	print "Saving file", filename
+	fullName = os.path.join(path, filename)
+	savefile = open(fullName, 'w')
+	savefile.write(content)
+	savefile.close()
+	return savefile
 
 
 def PrettyPrintJson(data):
-    return json.dumps(data, indent=4, sort_keys=True)
+	return json.dumps(data, indent=4, sort_keys=True)
 
 
 def DissectSave(data, directory='extract'):
-    for item in data:
-        SaveFile(directory, item, PrettyPrintJson(saveData[item]))
-
+	for item in data:
+		SaveFile(directory, item, PrettyPrintJson(saveData[item]))
 
 globalCivReference = {}
 
 
 def CivLookup(saveData, civNumber):
-    for item in saveData['country']:
-        if item.isdigit():
-            try:
-                if item != str(civNumber):
-                    continue
-                return saveData['country'][item]['name']
-            except BaseException:
-                continue
+	for item in saveData['country']:
+		if item.isdigit():
+			try:
+				if item != str(civNumber):
+					continue
+				return saveData['country'][item]['name']
+			except BaseException:
+				continue
 
+def SystemOwnerLookup(saveData, systemName):
+	for country in saveData['country'] :
+		try:
+			for planet in saveData['country'][country]['controlled_planets']:
+				if SystemSearch(saveData, planet) == systemName:
+					return CivLookup(saveData, country)
+		except:
+			#This catches fake countries
+			continue
+	return "No Owner"
 
-def PlanetLookup(saveData, planetID):
-    galactic_object = saveData['galactic_object']
-    for system in galactic_object:
-        try:
-            if int(planetID) in galactic_object[system]['planet']:
-                return galactic_object[system]['name']
-        except BaseException:
-            continue
-    return "Unknown planet"
+def SystemSearch(saveData, planetID=None, systemID=None):
+	galactic_object = saveData['galactic_object']
+	if systemID:
+		return galactic_object[str(systemID)]['name']
+	for system in galactic_object:
+		try:
+			if int(planetID) in galactic_object[system]['planet']:
+				return galactic_object[system]['name']
+		except BaseException:
+			continue
+	return "Unknown planet"
 
 
 def ListToSingle(arg):
-    if not isinstance(arg, (list, tuple)):
-        arg = [arg]
-    return arg[0]
-
+	if not isinstance(arg, (list, tuple)):
+		arg = [arg]
+	return arg[0]
 
 def WarParticipantLookup(warValue, saveData, key):
-    offenderList = []
-    for offender in warValue[key]:
-        offenderList.append(offender['country'])
-    return offenderList
-
-
-def WarExhaustionCalculator():
-    # wip
-    return
+	offenderList = []
+	for offender in warValue[key]:
+		offenderList.append(offender['country'])
+	return offenderList
 
 
 def WarLookup(saveData, country):
-    warObject = {}
-    warMap = saveData['war']
-    for war in warMap:
-        try:
-            ThisWarsAttackers = WarParticipantLookup(
-                warMap[war], saveData, 'attackers')
-            if int(country) in ThisWarsAttackers:
-                ThisWarsDefenders = WarParticipantLookup(
-                    warMap[war], saveData, 'defenders')
-                warObject['offensiveWars'] = {}
-                #warAddress = warObject['offensiveWars'][warMap[war]['name']]
-                warObject['offensiveWars'][warMap[war]['name']] = {
-                    "attackers": [CivLookup(saveData, x) for x in ThisWarsAttackers],
-                    "defenders": [CivLookup(saveData, x) for x in ThisWarsDefenders],
-                    "attackerWarGoals": warMap[war]['attacker_war_goal']['type'],
-                    "defenderWarGoals": warMap[war]['defender_war_goal']['type']
-                }
-                warObject['offensiveWars'][warMap[war]['name']]['battles'] = {}
-                try:
-                    for battle in warMap[war]['battles']:
-                        ThisBattle = {}
-                        if battle['attacker_victory']:
-                            warObject['offensiveWars'][warMap[war]['name']
-                                                       ]['battles']['attackerVictories'] = []
-                            ThisBattle['system'] = saveData['galactic_object'][str(
-                                battle['planet'])]['name']
+	warObject = {}
+	warMap = saveData['war']
+	for war in warMap:
+		warType = None
+		try:
+			ThisWarsAttackers = WarParticipantLookup(warMap[war], saveData, 'attackers')
+			if int(country) in ThisWarsAttackers:
+				warType = 'offensiveWars'
+				ThisWarsDefenders = WarParticipantLookup(warMap[war], saveData, 'defenders')
+				warObject['offensiveWars'] = {}
+				#warAddress = warObject['offensiveWars'][warMap[war]['name']]
+				warObject['offensiveWars'][warMap[war]['name']] = {
+				"attackers": [ CivLookup(saveData, x) for x in ThisWarsAttackers ],
+				"defenders": [ CivLookup(saveData, x) for x in ThisWarsDefenders ],
+				"attackerWarGoals": warMap[war]['attacker_war_goal']['type'],
+				"defenderWarGoals": warMap[war]['defender_war_goal']['type']
+				}
+		except BaseException:
+			print full_stack()
+			print "Could not interpret agro war"
+			pass
 
-                            warObject['offensiveWars'][warMap[war]['name']
-                                                       ]['battles']['attackerVictories'].append(ThisBattle)
-                        else:
-                            warObject['offensiveWars'][warMap[war]['name']
-                                                       ]['battles']['defenderVictories'] = []
-                            ThisBattle['system'] = saveData['galactic_object'][str(
-                                battle['planet'])]['name']
 
-                            warObject['offensiveWars'][warMap[war]['name']
-                                                       ]['battles']['defenderVictories'].append(ThisBattle)
-                    # sort items with
-                    # list_of_dicts.sort(key=operator.itemgetter('name'))
-                except BaseException:
-                    print "Could not find battles"
-        except BaseException:
-            print full_stack()
-            print "Could not interpret agro war"
-        try:
-            ThisWarsDefenders = WarParticipantLookup(
-                warMap[war], saveData, 'defenders')
-            if int(country) in ThisWarsDefenders:
-                ThisWarsAttackers = WarParticipantLookup(
-                    warMap[war], saveData, 'attackers')
-                warObject['defensiveWars'] = {}
-                warObject['defensiveWars'][warMap[war]['name']] = {
-                    "attackers": [CivLookup(saveData, x) for x in ThisWarsAttackers],
-                    "defenders": [CivLookup(saveData, x) for x in ThisWarsDefenders],
-                    "attackerWarGoals": warMap[war]['attacker_war_goal']['type'],
-                    "defenderWarGoals": warMap[war]['defender_war_goal']['type']
-                }
+		try:
+			ThisWarsDefenders = WarParticipantLookup(warMap[war], saveData, 'defenders')
+			if int(country) in ThisWarsDefenders:
+				warType = 'defensiveWars'
+				relevantWar = True
+				ThisWarsAttackers = WarParticipantLookup(warMap[war], saveData, 'attackers')
+				warObject['defensiveWars'] = {}
+				warObject['defensiveWars'][warMap[war]['name']] = {
+				"attackers": [ CivLookup(saveData, x) for x in ThisWarsAttackers ],
+				"defenders": [ CivLookup(saveData, x) for x in ThisWarsDefenders ],
+				"attackerWarGoals": warMap[war]['attacker_war_goal']['type'],
+				"defenderWarGoals": warMap[war]['defender_war_goal']['type']
+				}
 
-        except BaseException:
-            print "Could not interpret def war"
-        # todo here:
-        # battle lookup
-        # war exhaustion
-    return warObject
+		except BaseException:
+			print "Could not interpret def war"
+			pass
+
+
+		try:
+			if 'battles' not in warMap[war] :
+				print "War list does not contain a battle section"
+				pass
+			elif not warType :
+				pass#print "This war is not relevant"
+			elif not warMap[war]['battles']:
+				print 'Battle list present but empty'
+				pass
+			else:
+				if 'battles' not in warObject[warType][warMap[war]['name']]:
+					warObject[warType][warMap[war]['name']]['battles'] = {}
+				warObject[warType][warMap[war]['name']]['attackerExhaustionTotal'] = 0
+				warObject[warType][warMap[war]['name']]['defenderExhaustionTotal'] = 0
+				for battle in warMap[war]['battles']:
+					ThisBattle = {}
+					ThisBattle['attackerExhaustion'] = (round(battle['attacker_war_exhaustion'] * 100, 2))
+					warObject[warType][warMap[war]['name']]['attackerExhaustionTotal'] += ThisBattle['attackerExhaustion']
+					ThisBattle['defenderExhaustion'] = (round(battle['defender_war_exhaustion'] * 100, 2))
+					warObject[warType][warMap[war]['name']]['defenderExhaustionTotal'] += ThisBattle['defenderExhaustion']
+					if battle['system'] and battle['system'] != 4294967295:
+						ThisBattle['system'] = SystemSearch(saveData, planetID=None, systemID=battle['system'])
+						print ThisBattle['system']
+					if battle['attacker_victory'] == True:
+						if 'attackerVictories' not in warObject[warType][warMap[war]['name']]['battles']:
+							warObject[warType][warMap[war]['name']]['battles']['attackerVictories'] = []
+						warObject[warType][warMap[war]['name']]['battles']['attackerVictories'].append(ThisBattle)
+					else:
+						#finding system name is hard #ThisBattle['system'] = saveData['galactic_object'][str(battle['planet'])]['name']
+						if 'defenderVictories' not in warObject[warType][warMap[war]['name']]['battles']:
+							warObject[warType][warMap[war]['name']]['battles']['defenderVictories'] = []
+						warObject[warType][warMap[war]['name']]['battles']['defenderVictories'].append(ThisBattle)
+			#sort items with list_of_dicts.sort(key=operator.itemgetter('name'))
+		except:
+			print "Could not find battles", warMap[war]['name']
+			print full_stack()
+			pass
+	return warObject
+
+
+
+def ClaimLookup(saveData, country):
+	ClaimList = []
+
+	for system in saveData['galactic_object']:
+		try:
+			if 'claims' not in saveData['galactic_object'][system]:
+				continue
+			for claim in saveData['galactic_object'][system]['claims']:
+				if claim['owner'] == int(country):
+					ClaimInstance = {}
+					ClaimInstance['system'] = SystemSearch(saveData, planetID=None, systemID=system)
+					ClaimInstance['currentOwner'] = SystemOwnerLookup(saveData, ClaimInstance['system'])
+					ClaimList.append(ClaimInstance)
+		except BaseException:
+			print full_stack()
+			continue
+	return sortList(ClaimList, "system")
+
 
 
 def InformationMap(saveData, country):
 
-    MonthReport = {}
+	MonthReport = {}
 
-    countryMap = saveData['country'][country]
-    # income amounts
-    standard_economy_module = countryMap['modules']['standard_economy_module']
-    monthlyResources = {}
-    for resource in standard_economy_module['last_month']:
-        monthlyResources[resource] = ListToSingle(
-            standard_economy_module['last_month'][resource])
-    MonthReport['monthlyResources'] = monthlyResources
+	countryMap = saveData['country'][country]
+	# income amounts
+	standard_economy_module = countryMap['modules']['standard_economy_module']
+	monthlyResources = {}
+	for resource in standard_economy_module['last_month']:
+		monthlyResources[resource] = ListToSingle(standard_economy_module['last_month'][resource])
+	MonthReport['monthlyResources'] = monthlyResources
 
-    #amount in bank
-    bankedResources = {}
-    for resource in standard_economy_module['resources']:
-        bankedResources[resource] = ListToSingle(
-            standard_economy_module['resources'][resource])
-    MonthReport['bankedResources'] = bankedResources
+	#amount in bank
+	bankedResources = {}
+	for resource in standard_economy_module['resources']:
+		bankedResources[resource] = ListToSingle(standard_economy_module['resources'][resource])
+	MonthReport['bankedResources'] = bankedResources
 
-    # owned systems
-    MonthReport['controlledSystems'] = []
-    for planet in countryMap['controlled_planets']:
-        MonthReport['controlledSystems'].append(PlanetLookup(saveData, planet))
-    MonthReport['controlledSystems'] = list(
-        set(MonthReport['controlledSystems']))
-    #	captial system:
-    MonthReport['capitalSystem'] = PlanetLookup(
-        saveData, countryMap['capital'])
-    # goverment types
-    #MonthReport['govermentType'] = countryMap['goverment']['type']
+	# owned systems
+	MonthReport['controlledSystems'] = []
+	for planet in countryMap['controlled_planets']:
+		MonthReport['controlledSystems'].append(SystemSearch(saveData, planet))
+	MonthReport['controlledSystems'] = list(
+		set(MonthReport['controlledSystems']))
+	#	captial system:
+	MonthReport['capitalSystem'] = SystemSearch(
+		saveData, countryMap['capital'])
+	# goverment types
+	#MonthReport['govermentType'] = countryMap['goverment']['type']
 
-    # wars
-    MonthReport['wars'] = WarLookup(saveData, country)
+	# wars
+	MonthReport['wars'] = WarLookup(saveData, country)
 
-    '''
-	#	attackers/defenders - compute owner
-	#warMap['attackers'][i]['country']
-	#warMap['defenders'][i]['country']
-	#	battles
-	#warMap['battles']
+	MonthReport['claims'] = ClaimLookup(saveData, country)
 
-	#	#claims - compute owner
-	saveData['galactic_object'][item]['claims'][i]
-	#options of everyone
-	saveData['country'][country]['ai']['attitude']
-	#	#rivalries
-	saveData['country'][country]['standard_diplomacy_module']['rivals'][i]
+
+
+	MonthReport['opinons'] = {}
+	for item in countryMap['ai']['attitude']:
+		MonthReport['opinons'][CivLookup(saveData, item['country'])] = item['attitude']
+
+	MonthReport['rivals'] = []
+	for rival in countryMap['modules']['standard_diplomacy_module']['rivals']
+		MonthReport['rivals'].append(CivLookup(saveData, rival))
+
+	'''
 	#fleet sizes
 
 	#leaders
@@ -313,58 +350,63 @@ def InformationMap(saveData, country):
 	#notable polacy changes - diff
 	saveData['country'][country]['active_policies']
 	'''
-    return MonthReport
+	return MonthReport
 
 
 def InterpretSave(saveData):
-    currentDate = str(dparser.parse(saveData['date'], fuzzy=True).date())
+	currentDate = str(dparser.parse(saveData['date'], fuzzy=True).date())
 
-    months = {
-        currentDate: {}
-    }
+	months = {
+		currentDate: {}
+	}
 
-    for country in saveData['country']:
-        try:
-            countryName = saveData['country'][country]['name']
-            months[currentDate][countryName] = InformationMap(
-                saveData,
-                country)
+	for country in saveData['country']:
+		try:
+			countryName = saveData['country'][country]['name']
+			months[currentDate][countryName] = InformationMap(
+				saveData,
+				country)
 
-        except Exception:
-            # print full_stack()
-            continue
+		except Exception as e:
+			#print full_stack()
+			continue
 
-    return months
+	return months
 
 
 if __name__ == '__main__':
 
-    if args['dissect']:
-        print 'Dissecting save file to', args['dissect']
-        print 'Loaded save file', args['inputSave']
-        saveData = ExtractSave(args['inputSave'])
-        for item in saveData:
-            SaveFile(args['dissect'], item, PrettyPrintJson(saveData[item]))
-        exit()
-    if args['directory']:
-        print 'Loading saves from', args['directory']
-        timeline = {}
-        for filename in os.listdir(args['directory']):
-            if filename.endswith(".sav"):
-                print 'Loading save file', filename
-                saveData = ExtractSave(args['directory'] + filename)
-                timeline.update(InterpretSave(saveData))
-            else:
-                continue
-        print PrettyPrintJson(timeline)
-        exit()
-    else:
-        if args['inputSave']:
-            print 'Loaded save file', args['inputSave']
-            saveData = ExtractSave(args['inputSave'])
-            print PrettyPrintJson(InterpretSave(saveData))
-            exit()
+	if args['dissect']:
+		print 'Dissecting save file to', args['dissect']
+		print 'Loaded save file', args['inputSave']
+		saveData = ExtractSave(args['inputSave'])
+		for item in saveData:
+			SaveFile(args['dissect'], item, PrettyPrintJson(saveData[item]))
+		exit()
+	if args['directory']:
+		print 'Loading saves from', args['directory']
+		timeline = {}
+		for filename in os.listdir(args['directory']):
+			if filename.endswith(".sav"):
+				print 'Loading save file', filename
+				saveData = ExtractSave(args['directory']+filename)
+				timeline.update(InterpretSave(saveData))
+			else:
+				continue
+		print PrettyPrintJson(timeline)
+		exit()
+	else:
+		if args['inputSave']:
+			print 'Loaded save file', args['inputSave']
+			saveData = ExtractSave(args['inputSave'])
+			#print PrettyPrintJson( WarLookup(saveData, "4"))
+			print PrettyPrintJson (InterpretSave(saveData))
+			#print PrettyPrintJson( InformationMap(saveData, "0"))
+			exit()
 
-    # print json.dumps(diff(saveData1['country']['1']
-    # ,saveData2['country']['1'] ))
-    exit()
+
+
+
+	# print json.dumps(diff(saveData1['country']['1'] ,saveData2['country']['1'] ))
+	exit()
+
