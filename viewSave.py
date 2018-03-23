@@ -1,15 +1,10 @@
 import json
 from subprocess import Popen, PIPE
 import zipfile
-import random
-import string
 import os
-import hashlib
 import dateutil.parser as dparser
 from jsondiff import diff
 import time
-import linecache
-import sys
 import argparse
 import operator
 
@@ -88,8 +83,8 @@ def sendToParser(inFileName, outFileName):
 	print "Waiting on parser..."
 	output, err = p.communicate(
 		b"input data that is passed to subprocess' stdin")
-	p_status = p.wait()
-	rc = p.returncode
+	p.wait()
+	p.returncode
 	return output
 
 
@@ -197,14 +192,12 @@ def WarLookup(saveData, country):
 		except BaseException:
 			print full_stack()
 			print "Could not interpret agro war"
-			pass
 
 
 		try:
 			ThisWarsDefenders = WarParticipantLookup(warMap[war], saveData, 'defenders')
 			if int(country) in ThisWarsDefenders:
 				warType = 'defensiveWars'
-				relevantWar = True
 				ThisWarsAttackers = WarParticipantLookup(warMap[war], saveData, 'attackers')
 				warObject['defensiveWars'] = {}
 				warObject['defensiveWars'][warMap[war]['name']] = {
@@ -216,7 +209,6 @@ def WarLookup(saveData, country):
 
 		except BaseException:
 			print "Could not interpret def war"
-			pass
 
 
 		try:
@@ -252,7 +244,6 @@ def WarLookup(saveData, country):
 		except:
 			print "Could not find battles", warMap[war]['name']
 			print full_stack()
-			pass
 	return warObject
 
 
@@ -301,7 +292,6 @@ def FleetsLookup(saveData, country, specificShip=None, admirals=None):
 					return saveData['fleet'][fleet]['name']
 		except:
 			print full_stack()
-			pass
 	if specificShip:
 		return "Unknown Space Fleet"
 	return sortList(fleetsList, 'ships', True)
@@ -347,7 +337,6 @@ def LeadersLookup(saveData, country, leaderType, specificLeader=None):
 
 
 def TechnologyLookup(saveData, country):
-	empty = None
 	countryData = saveData['country'][country]
 	techMap = countryData['tech_status']
 	technologyObject = {}
@@ -494,7 +483,7 @@ def InterpretSave(saveData):
 				saveData,
 				country)
 
-		except Exception as e:
+		except Exception:
 			#print full_stack()
 			continue
 
