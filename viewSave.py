@@ -57,8 +57,8 @@ def full_stack():
 
 #####
 
-def sortList(l, k):
-	return sorted(l, key=operator.itemgetter(k))
+def sortList(l, k, r=False):
+	return sorted(l, key=operator.itemgetter(k), reverse=r)
 
 
 def extractGamestate(path):
@@ -221,12 +221,10 @@ def WarLookup(saveData, country):
 
 		try:
 			if 'battles' not in warMap[war] :
-				print "War list does not contain a battle section"
 				pass
 			elif not warType :
 				pass#print "This war is not relevant"
 			elif not warMap[war]['battles']:
-				print 'Battle list present but empty'
 				pass
 			else:
 				if 'battles' not in warObject[warType][warMap[war]['name']]:
@@ -241,7 +239,6 @@ def WarLookup(saveData, country):
 					warObject[warType][warMap[war]['name']]['defenderExhaustionTotal'] += ThisBattle['defenderExhaustion']
 					if battle['system'] and battle['system'] != 4294967295:
 						ThisBattle['system'] = SystemSearch(saveData, planetID=None, systemID=battle['system'])
-						print ThisBattle['system']
 					if battle['attacker_victory'] == True:
 						if 'attackerVictories' not in warObject[warType][warMap[war]['name']]['battles']:
 							warObject[warType][warMap[war]['name']]['battles']['attackerVictories'] = []
@@ -278,7 +275,109 @@ def ClaimLookup(saveData, country):
 			continue
 	return sortList(ClaimList, "system")
 
+def FleetsLookup(saveData, country, specificShip=None, admirals=None):
+	fleetsList = []
+	for fleet in saveData['fleet']:
+		fleetInstance = {}
+		try:
+			requiredFields = ['owner','name']
+			if not any(x in saveData['fleet'][fleet] for x in requiredFields):
+				continue
+			unrequiredFields = ['station','civilian']
+			if any(x in saveData['fleet'][fleet] for x in unrequiredFields):
+				continue
+			if not specificShip:
+				if 'transport' in saveData['fleet'][fleet]['name'].lower():
+					continue
+			if saveData['fleet'][fleet]['owner'] == int(country):
+				fleetInstance['name'] = saveData['fleet'][fleet]['name']
+				fleetInstance['ships'] = len(saveData['fleet'][fleet]['ships'])
+				if admirals:
+					for admiral in admirals:
+						if admiral['location'] == fleetInstance['name']:
+							fleetInstance['admiral'] = admiral['name']
+				fleetsList.append(fleetInstance)
+				if specificShip in saveData['fleet'][fleet]['ships']:
+					return saveData['fleet'][fleet]['name']
+		except:
+			print full_stack()
+			pass
+	if specificShip:
+		return "Unknown Space Fleet"
+	return sortList(fleetsList, 'ships', True)
 
+def LeadersLookup(saveData, country, leaderType, specificLeader=None):
+	#leaderTypes: admiral, general, governor, ruler, scientist
+	leaderList = []
+	for leader in saveData['leaders']:
+		try:
+			leaderInstance = {}
+			#print saveData['leaders'][leader]['country'], country
+			if saveData['leaders'][leader]['country'] == int(country):
+				if saveData['leaders'][leader]['class'] == leaderType:
+
+					if isinstance(saveData['leaders'][leader]['roles'][leaderType]['trait'], (list, tuple)):
+						leaderInstance['traits'] = saveData['leaders'][leader]['roles'][leaderType]['trait']
+					else:
+						leaderInstance['traits'] = [saveData['leaders'][leader]['roles'][leaderType]['trait']]
+					leaderInstance['level'] = saveData['leaders'][leader]['level']
+					leaderInstance['name'] = " ".join(saveData['leaders'][leader]['name'].values())
+
+					if specificLeader:
+						if int(specificLeader) == int(leader):
+							return leaderInstance['name']
+
+					if 'ship' in saveData['leaders'][leader]['location']:
+						leaderInstance['location'] = FleetsLookup(saveData, country, specificShip=saveData['leaders'][leader]['location']['ship'])
+					else:
+						leaderInstance['location'] = SystemSearch(saveData, saveData['leaders'][leader]['location']['planet'])
+					leaderInstance['age'] = saveData['leaders'][leader]['age']
+					if sum(map(int, list(str(abs(sum([ord(char) - 96 for char in leaderInstance['name'].lower()]))))[:2])) == 7:
+						leaderInstance['gender'] = "Genderless"
+					else:
+						leaderInstance['gender'] = saveData['leaders'][leader]['gender']
+					leaderList.append(leaderInstance)
+		except:
+			print country
+			print full_stack()
+			continue
+	if specificLeader:
+		return "No leader"
+	return sortList(leaderList, 'level', True)
+
+
+def TechnologyLookup(saveData, country):
+	empty = None
+	countryData = saveData['country'][country]
+	techMap = countryData['tech_status']
+	technologyObject = {}
+	technologyObject['engineering'] = {}
+	technologyObject['physics'] = {}
+	technologyObject['society'] = {}
+	requiredFields = ['engineering','physics','society']
+	for researcherType in requiredFields:
+		if researcherType not in techMap['leaders']:
+			techMap['leaders'][researcherType] = "No leader"
+	for field, leader in techMap['leaders'].iteritems():
+		technologyObject[field]['researcher'] = LeadersLookup(saveData, country, leaderType='scientist', specificLeader=leader)
+
+	if 'engineering_queue' in techMap:
+		technologyObject['engineering']['currentResearch'] = [x['technology'] for x in techMap['engineering_queue'] if 'technology' in x][0]
+	else:
+		technologyObject['engineering']['currentResearch'] = None
+
+	if 'physics_queue' in techMap:
+		technologyObject['physics']['currentResearch'] = [x['technology'] for x in techMap['physics_queue'] if 'technology' in x][0]
+	else:
+		technologyObject['physics']['currentResearch'] = None
+
+	if 'society_queue' in techMap:
+		technologyObject['society']['currentResearch'] = [x['technology'] for x in techMap['physics_queue'] if 'technology' in x][0]
+	else:
+		technologyObject['society']['currentResearch'] = None
+	technologyObject['completedResearch'] = techMap['technology']
+
+	return technologyObject
 
 def InformationMap(saveData, country):
 
@@ -322,33 +421,61 @@ def InformationMap(saveData, country):
 		MonthReport['opinons'][CivLookup(saveData, item['country'])] = item['attitude']
 
 	MonthReport['rivals'] = []
-	for rival in countryMap['modules']['standard_diplomacy_module']['rivals']
-		MonthReport['rivals'].append(CivLookup(saveData, rival))
+	if 'rivals' in countryMap['modules']['standard_diplomacy_module']:
+		for rival in countryMap['modules']['standard_diplomacy_module']['rivals']:
+			MonthReport['rivals'].append(CivLookup(saveData, rival))
+
+	#we are going to cheat here and misassign leaders.
+	#This makes for better story telling and I cant figure out how its supposed to work
+
+	MonthReport['leaders'] = {}
+	MonthReport['leaders']['admirals'] = LeadersLookup(saveData, country, leaderType='admiral')
+	MonthReport['leaders']['generals'] = LeadersLookup(saveData, country, leaderType='general')
+	MonthReport['leaders']['governors'] = LeadersLookup(saveData, country, leaderType='governor')
+	MonthReport['leaders']['rulers'] = LeadersLookup(saveData, country, leaderType='ruler')
+	MonthReport['leaders']['scientists'] = LeadersLookup(saveData, country, leaderType='scientist')
+
+	MonthReport["millitary"] =  {}
+	MonthReport["millitary"]['fleets'] = FleetsLookup(saveData, country, admirals=MonthReport['leaders']['admirals'])
+	MonthReport["millitary"]['totalStrength'] =  countryMap['military_power']
+
+	MonthReport['tradeDeals'] = []
+	for deal in saveData['trade_deal'] :
+		dealInstance = {}
+		thisDeal = saveData['trade_deal'][deal]
+		if thisDeal['first']['country'] == int(country) or thisDeal['second']['country'] == int(country):
+			dealInstance['length'] = thisDeal['length']
+			dealInstance['initiator'] = CivLookup(saveData, thisDeal['first']['country'])
+			dealInstance['partner'] =  CivLookup(saveData, thisDeal['second']['country'])
+			MonthReport['tradeDeals'].append(dealInstance)
+			#todo: add the contents of the trade deal
+
+	MonthReport['allianceMembership'] = {}
+	for alliance in saveData['alliance']:
+		allianceMap = {}
+		thisAlliance = saveData['alliance'][alliance]
+		membershipFields = ['associates','members']
+		for field in membershipFields:
+			allianceMap[field] = [CivLookup(saveData, x) for x in thisAlliance[field]]
+			if int(country) in thisAlliance[field]:
+				allianceMap['leader'] = CivLookup (saveData, thisAlliance['leader'])
+				allianceMap['ourMembershipType'] = field
+				MonthReport['allianceMembership'][thisAlliance['name']] = allianceMap
+
+	MonthReport['technology'] = TechnologyLookup(saveData, country)
+	#todo: add special project tracker
+
+	MonthReport['ascensionPerks'] = countryMap['ascension_perks']
+
+	MonthReport['policies'] = {}
+	for policy in countryMap['active_policies']:
+		policy['policy']
+		MonthReport['policies'][policy['policy']] = policy['selected']
+
 
 	'''
-	#fleet sizes
-
-	#leaders
-	saveData['leaders'][leaderNumber]
-	#trade deals
-	trade_deals = saveData['trade_deal'][number]
-	#first party:
-	trade_deals['first']['country']
-	#second party:
-	trade_deals['second']['country']
-	#alliances
-	alliance = saveData['alliance'][number]
-	#name:
-	alliance['name']
-	alliance['members'][i]
+	todo:
 	#big events (crises)
-
-	#tech level-diff
-	saveData['country'][country]['tech_status']['technology']
-	#asension perks-diff
-
-	#notable polacy changes - diff
-	saveData['country'][country]['active_policies']
 	'''
 	return MonthReport
 
@@ -389,10 +516,15 @@ if __name__ == '__main__':
 		for filename in os.listdir(args['directory']):
 			if filename.endswith(".sav"):
 				print 'Loading save file', filename
-				saveData = ExtractSave(args['directory']+filename)
-				timeline.update(InterpretSave(saveData))
+				try:
+					saveData = ExtractSave(args['directory']+filename)
+					timeline.update(InterpretSave(saveData))
+				except:
+					timeline.update({filename:full_stack()})
+					continue
 			else:
 				continue
+			SaveFile("timelines/", "timeline", timeline)
 		print PrettyPrintJson(timeline)
 		exit()
 	else:
@@ -401,7 +533,9 @@ if __name__ == '__main__':
 			saveData = ExtractSave(args['inputSave'])
 			#print PrettyPrintJson( WarLookup(saveData, "4"))
 			print PrettyPrintJson (InterpretSave(saveData))
-			#print PrettyPrintJson( InformationMap(saveData, "0"))
+			#PrettyPrintJson( InformationMap(saveData, "0"))
+			#print PrettyPrintJson(TechnologyLookup(saveData, "8"))
+			#print PrettyPrintJson( LeadersLookup(saveData, "0", leaderType="scientist", specificLeader="410"))
 			exit()
 
 
