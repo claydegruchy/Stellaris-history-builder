@@ -3,7 +3,6 @@ from subprocess import Popen, PIPE
 import zipfile
 import os
 import dateutil.parser as dparser
-from jsondiff import diff
 import time
 import argparse
 import operator
@@ -23,6 +22,16 @@ args = vars(parser.parse_args())
 
 stardateBlockTargetDirectory = args['blockfolder']
 
+
+#issues:
+'''
+issue in 2301.08.26.sav, wars not working
+'''
+
+#todo:
+'''
+include something like https://github.com/mewwts/addict for better parsing
+'''
 
 # effiency and debugging tools
 def timing(f):
@@ -267,7 +276,7 @@ def ClaimLookup(saveData, country):
 	return sortList(ClaimList, "system")
 
 def FleetsLookup(saveData, country, specificShip=None, admirals=None):
-	fleetsList = []
+	fleetsList = {}
 	for fleet in saveData['fleet']:
 		fleetInstance = {}
 		try:
@@ -281,24 +290,23 @@ def FleetsLookup(saveData, country, specificShip=None, admirals=None):
 				if 'transport' in saveData['fleet'][fleet]['name'].lower():
 					continue
 			if saveData['fleet'][fleet]['owner'] == int(country):
-				fleetInstance['name'] = saveData['fleet'][fleet]['name']
 				fleetInstance['ships'] = len(saveData['fleet'][fleet]['ships'])
 				if admirals:
 					for admiral in admirals:
-						if admiral['location'] == fleetInstance['name']:
-							fleetInstance['admiral'] = admiral['name']
-				fleetsList.append(fleetInstance)
+						if admirals[admiral]['location'] == saveData['fleet'][fleet]['name']:
+							fleetInstance['admiral'] = admirals[admiral]['name']
+				fleetsList[saveData['fleet'][fleet]['name']] = fleetInstance
 				if specificShip in saveData['fleet'][fleet]['ships']:
 					return saveData['fleet'][fleet]['name']
 		except:
 			print full_stack()
 	if specificShip:
 		return "Unknown Space Fleet"
-	return sortList(fleetsList, 'ships', True)
+	return fleetsList
 
 def LeadersLookup(saveData, country, leaderType, specificLeader=None):
 	#leaderTypes: admiral, general, governor, ruler, scientist
-	leaderList = []
+	leaderList = {}
 	for leader in saveData['leaders']:
 		try:
 			leaderInstance = {}
@@ -326,14 +334,14 @@ def LeadersLookup(saveData, country, leaderType, specificLeader=None):
 						leaderInstance['gender'] = "Genderless"
 					else:
 						leaderInstance['gender'] = saveData['leaders'][leader]['gender']
-					leaderList.append(leaderInstance)
+					leaderList[leaderInstance['name']] = leaderInstance
 		except:
-			print country
-			print full_stack()
+			#print country
+			#print full_stack()
 			continue
 	if specificLeader:
 		return "No leader"
-	return sortList(leaderList, 'level', True)
+	return leaderList
 
 
 def TechnologyLookup(saveData, country):
@@ -361,7 +369,7 @@ def TechnologyLookup(saveData, country):
 		technologyObject['physics']['currentResearch'] = None
 
 	if 'society_queue' in techMap:
-		technologyObject['society']['currentResearch'] = [x['technology'] for x in techMap['physics_queue'] if 'technology' in x][0]
+		technologyObject['society']['currentResearch'] = [x['technology'] for x in techMap['society_queue'] if 'technology' in x][0]
 	else:
 		technologyObject['society']['currentResearch'] = None
 	technologyObject['completedResearch'] = techMap['technology']
@@ -371,6 +379,7 @@ def TechnologyLookup(saveData, country):
 def InformationMap(saveData, country):
 
 	MonthReport = {}
+	print "parsing", saveData['country'][country]['name']
 
 	countryMap = saveData['country'][country]
 	# income amounts
@@ -396,7 +405,7 @@ def InformationMap(saveData, country):
 	MonthReport['capitalSystem'] = SystemSearch(
 		saveData, countryMap['capital'])
 	# goverment types
-	#MonthReport['govermentType'] = countryMap['goverment']['type']
+	MonthReport['govermentType'] = countryMap['government']['type']
 
 	# wars
 	MonthReport['wars'] = WarLookup(saveData, country)
@@ -454,7 +463,8 @@ def InformationMap(saveData, country):
 	MonthReport['technology'] = TechnologyLookup(saveData, country)
 	#todo: add special project tracker
 
-	MonthReport['ascensionPerks'] = countryMap['ascension_perks']
+	if 'ascension_perks' in countryMap:
+		MonthReport['ascensionPerks'] = countryMap['ascension_perks']
 
 	MonthReport['policies'] = {}
 	for policy in countryMap['active_policies']:
@@ -466,28 +476,31 @@ def InformationMap(saveData, country):
 	todo:
 	#big events (crises)
 	'''
+	print "successfully parsed", saveData['country'][country]['name']
+	print "######"
 	return MonthReport
 
 
 def InterpretSave(saveData):
 	currentDate = str(dparser.parse(saveData['date'], fuzzy=True).date())
-
-	months = {
-		currentDate: {}
-	}
-
+	print currentDate
+	thisSave = {}
+	thisSave['currentDate'] = currentDate
 	for country in saveData['country']:
+		if 'name' not in saveData['country'][country]:
+			continue
 		try:
+			print saveData['country'][country]['name']
 			countryName = saveData['country'][country]['name']
-			months[currentDate][countryName] = InformationMap(
+			thisSave[countryName] = InformationMap(
 				saveData,
 				country)
 
 		except Exception:
-			#print full_stack()
+			print full_stack()
 			continue
 
-	return months
+	return thisSave
 
 
 if __name__ == '__main__':
@@ -498,38 +511,31 @@ if __name__ == '__main__':
 		saveData = ExtractSave(args['inputSave'])
 		for item in saveData:
 			SaveFile(args['dissect'], item, PrettyPrintJson(saveData[item]))
-		exit()
 	if args['directory']:
 		print 'Loading saves from', args['directory']
 		timeline = {}
 		for filename in os.listdir(args['directory']):
 			if filename.endswith(".sav"):
 				print 'Loading save file', filename
-				try:
-					saveData = ExtractSave(args['directory']+filename)
-					timeline.update(InterpretSave(saveData))
-				except:
-					timeline.update({filename:full_stack()})
-					continue
+				saveData = ExtractSave(args['directory']+filename)
+				interpretedSave = InterpretSave( saveData)
+				print interpretedSave['currentDate']
+				timeline[interpretedSave['currentDate']] = interpretedSave
+				#timeline.sort(key=operator.itemgetter('currentDate'))
 			else:
 				continue
-			SaveFile("timelines/", "timeline", timeline)
-		print PrettyPrintJson(timeline)
+		SaveFile(path=args['directory'], filename="timeline.json", content=json.dumps(timeline))
 		exit()
 	else:
 		if args['inputSave']:
 			print 'Loaded save file', args['inputSave']
 			saveData = ExtractSave(args['inputSave'])
 			#print PrettyPrintJson( WarLookup(saveData, "4"))
-			print PrettyPrintJson (InterpretSave(saveData))
-			#PrettyPrintJson( InformationMap(saveData, "0"))
+			#print PrettyPrintJson (InterpretSave(saveData))
+			print PrettyPrintJson( InformationMap(saveData, "0"))
 			#print PrettyPrintJson(TechnologyLookup(saveData, "8"))
 			#print PrettyPrintJson( LeadersLookup(saveData, "0", leaderType="scientist", specificLeader="410"))
 			exit()
 
-
-
-
-	# print json.dumps(diff(saveData1['country']['1'] ,saveData2['country']['1'] ))
 	exit()
 
