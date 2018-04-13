@@ -9,12 +9,15 @@ import operator
 
 
 defaultBlockLocation = 'blocks/'
+interpretedSaveFolder = 'esf/'
+
 parser = argparse.ArgumentParser(description='Stellaris save file dissector and interpreter')
 parser.add_argument('-d', '--dissect', help='Split a save file into parts of examination, be sure to incude the directory', default=None)
 parser.add_argument('-dir', '--directory', help='parses all files in a given directory', default=None)
 requiredNamed = parser.add_argument_group('Required named arguments')
 requiredNamed.add_argument('-i', '--inputSave', help='Input file name')
 requiredNamed.add_argument('-b', '--blockfolder', help='Directory to store each parsed save.json (default = {defaultBlock})'.format(defaultBlock=defaultBlockLocation), default=defaultBlockLocation)
+requiredNamed.add_argument('-s', '--savefolder', help='Directory to store each interpreted save.sav.json (default = {defaultBlock})'.format(defaultBlock=interpretedSaveFolder), default=interpretedSaveFolder)
 #parser.parse_args(['-h'])
 args = vars(parser.parse_args())
 
@@ -115,7 +118,7 @@ def ExtractSave(filename):
 
 
 def SaveFile(path, filename, content):
-	print "Saving file", filename
+	print "Saving file", path, filename
 	fullName = os.path.join(path, filename)
 	savefile = open(fullName, 'w')
 	savefile.write(content)
@@ -380,20 +383,25 @@ def InformationMap(saveData, country):
 
 	MonthReport = {}
 	print "parsing", saveData['country'][country]['name']
-
+	MonthReport['civType'] = None
 	countryMap = saveData['country'][country]
 	# income amounts
-	standard_economy_module = countryMap['modules']['standard_economy_module']
-	monthlyResources = {}
-	for resource in standard_economy_module['last_month']:
-		monthlyResources[resource] = ListToSingle(standard_economy_module['last_month'][resource])
-	MonthReport['monthlyResources'] = monthlyResources
+	if 'standard_economy_module' in  countryMap['modules']:
+		standard_economy_module = countryMap['modules']['standard_economy_module']
+		monthlyResources = {}
+		for resource in standard_economy_module['last_month']:
+			monthlyResources[resource] = ListToSingle(standard_economy_module['last_month'][resource])
+		MonthReport['monthlyResources'] = monthlyResources
 
-	#amount in bank
-	bankedResources = {}
-	for resource in standard_economy_module['resources']:
-		bankedResources[resource] = ListToSingle(standard_economy_module['resources'][resource])
-	MonthReport['bankedResources'] = bankedResources
+		#amount in bank
+		bankedResources = {}
+		for resource in standard_economy_module['resources']:
+			bankedResources[resource] = ListToSingle(standard_economy_module['resources'][resource])
+		MonthReport['bankedResources'] = bankedResources
+		if MonthReport['civType'] != "non-standard":
+			MonthReport['civType'] = "standard"
+	else:
+		MonthReport['civType'] = "non-standard"
 
 	# owned systems
 	MonthReport['controlledSystems'] = []
@@ -406,7 +414,6 @@ def InformationMap(saveData, country):
 		saveData, countryMap['capital'])
 	# goverment types
 	MonthReport['govermentType'] = countryMap['government']['type']
-
 	# wars
 	MonthReport['wars'] = WarLookup(saveData, country)
 
@@ -415,13 +422,20 @@ def InformationMap(saveData, country):
 
 
 	MonthReport['opinons'] = {}
-	for item in countryMap['ai']['attitude']:
-		MonthReport['opinons'][CivLookup(saveData, item['country'])] = item['attitude']
+	if 'attitude' in countryMap['ai']:
+		for item in countryMap['ai']['attitude']:
+			MonthReport['opinons'][CivLookup(saveData, item['country'])] = item['attitude']
 
-	MonthReport['rivals'] = []
-	if 'rivals' in countryMap['modules']['standard_diplomacy_module']:
-		for rival in countryMap['modules']['standard_diplomacy_module']['rivals']:
-			MonthReport['rivals'].append(CivLookup(saveData, rival))
+
+	if 'standard_diplomacy_module' in countryMap['modules']:
+		if MonthReport['civType'] != "non-standard":
+			MonthReport['civType'] = "standard"
+		MonthReport['rivals'] = []
+		if 'rivals' in countryMap['modules']['standard_diplomacy_module']:
+			for rival in countryMap['modules']['standard_diplomacy_module']['rivals']:
+				MonthReport['rivals'].append(CivLookup(saveData, rival))
+	else:
+		MonthReport['civType'] = "non-standard"
 
 	#we are going to cheat here and misassign leaders.
 	#This makes for better story telling and I cant figure out how its supposed to work
@@ -514,25 +528,47 @@ if __name__ == '__main__':
 	if args['directory']:
 		print 'Loading saves from', args['directory']
 		timeline = {}
+		saveNo = 0
 		for filename in os.listdir(args['directory']):
 			if filename.endswith(".sav"):
-				print 'Loading save file', filename
+				saveNo += 1
+
+		count = saveNo
+
+		for filename in os.listdir(args['directory']):
+			if filename.endswith(".sav"):
+				print 'Loading save file', filename, "number", saveNo - count, "out of", saveNo
+				count -= 1
+				fileExtention = ".sav.json"
+				extractFilename = str(dparser.parse(filename, fuzzy=True).date()) + fileExtention
+				if os.path.isfile(interpretedSaveFolder + extractFilename):
+					print "File already parsed", extractFilename
+					continue
 				saveData = ExtractSave(args['directory']+filename)
 				interpretedSave = InterpretSave( saveData)
-				print interpretedSave['currentDate']
-				timeline[interpretedSave['currentDate']] = interpretedSave
-				#timeline.sort(key=operator.itemgetter('currentDate'))
+				SaveFile(path=interpretedSaveFolder,filename=extractFilename,content=PrettyPrintJson(interpretedSave))
 			else:
 				continue
-		SaveFile(path=args['directory'], filename="timeline.json", content=json.dumps(timeline))
+
+		count = saveNo
+		for saveDumpFile in os.listdir(interpretedSaveFolder):
+			if saveDumpFile.endswith(fileExtention):
+				print 'Parsing extracted save file', saveDumpFile, "number", saveNo - count, "out of", saveNo
+				saveDumpFile = json.loads(open(interpretedSaveFolder+saveDumpFile).read())
+				count -= 1
+				print saveDumpFile['currentDate']
+				timeline[saveDumpFile['currentDate']] = saveDumpFile
+				#timeline.sort(key=operator.itemgetter('currentDate'))
+
+		SaveFile(path=interpretedSaveFolder, filename="timeline.json", content=PrettyPrintJson(timeline))
 		exit()
 	else:
 		if args['inputSave']:
 			print 'Loaded save file', args['inputSave']
 			saveData = ExtractSave(args['inputSave'])
 			#print PrettyPrintJson( WarLookup(saveData, "4"))
-			#print PrettyPrintJson (InterpretSave(saveData))
-			print PrettyPrintJson( InformationMap(saveData, "0"))
+			print PrettyPrintJson (InterpretSave(saveData))
+			#print PrettyPrintJson( InformationMap(saveData, "0"))
 			#print PrettyPrintJson(TechnologyLookup(saveData, "8"))
 			#print PrettyPrintJson( LeadersLookup(saveData, "0", leaderType="scientist", specificLeader="410"))
 			exit()
